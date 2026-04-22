@@ -1,0 +1,334 @@
+{
+  "address": "9JsjBXM4HetB33ojaGMEwqJMqJY2DkFG6oHctCfASU3X",
+  "metadata": {
+    "name": "specmarket_multi",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "initialize_market",
+      "discriminator": [35, 35, 189, 193, 155, 48, 170, 203],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "market_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_seed",
+          "type": "string"
+        },
+        {
+          "name": "initial_price_cents",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "open_position",
+      "discriminator": [135, 128, 47, 77, 15, 152, 240, 49],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 115, 105, 116, 105, 111, 110]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_collateral",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "size_units",
+          "type": "u64"
+        },
+        {
+          "name": "is_long",
+          "type": "bool"
+        },
+        {
+          "name": "leverage",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "set_limit_orders",
+      "discriminator": [65, 128, 90, 161, 171, 133, 122, 255],
+      "accounts": [
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 115, 105, 116, 105, 111, 110]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market"
+        },
+        {
+          "name": "user",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "take_profit_price_cents",
+          "type": "u64"
+        },
+        {
+          "name": "stop_loss_price_cents",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "close_position",
+      "discriminator": [123, 134, 81, 0, 49, 68, 98, 98],
+      "accounts": [
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 115, 105, 116, 105, 111, 110]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "user_collateral",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Market",
+      "discriminator": [219, 190, 213, 55, 0, 227, 198, 154],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "mark_price_cents",
+            "type": "u64"
+          },
+          {
+            "name": "index_price_cents",
+            "type": "u64"
+          },
+          {
+            "name": "total_oi_long",
+            "type": "u64"
+          },
+          {
+            "name": "total_oi_short",
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Position",
+      "discriminator": [170, 188, 143, 228, 122, 64, 247, 208],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "size_units",
+            "type": "u64"
+          },
+          {
+            "name": "is_long",
+            "type": "bool"
+          },
+          {
+            "name": "leverage",
+            "type": "u8"
+          },
+          {
+            "name": "entry_price_cents",
+            "type": "u64"
+          },
+          {
+            "name": "take_profit_price_cents",
+            "type": "u64"
+          },
+          {
+            "name": "stop_loss_price_cents",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "SizeTooSmall",
+      "msg": "Size too small (minimum 10 units)"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidLeverage",
+      "msg": "Invalid leverage (1-10x only)"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidVault",
+      "msg": "Invalid vault"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidTakeProfit",
+      "msg": "Invalid take profit price"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidStopLoss",
+      "msg": "Invalid stop loss price"
+    }
+  ]
+}

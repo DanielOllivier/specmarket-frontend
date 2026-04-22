@@ -1,0 +1,451 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
+import { WalletButton } from '@/components/WalletButton'
+import { Connection, PublicKey } from '@solana/web3.js'
+
+const RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com'
+const PROGRAM_ID = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID!)
+const MARKET_PDA = new PublicKey('CA9LFZPdowzA6d3sMwTZo8s8cCLB3etj17MPsMkf6GbL')
+
+interface ExistingPosition {
+  size: number
+  isLong: boolean
+  leverage: number
+  entryPrice: number
+  collateral: number
+}
+
+export default function TradePage() {
+  const params = useParams()
+  const marketId = params.marketId as string
+  
+  const [size, setSize] = useState(1.0)
+  const [leverage, setLeverage] = useState(5)
+  const [isLong, setIsLong] = useState(true)
+  const [isBlockchain, setIsBlockchain] = useState(false)
+  const [existingPosition, setExistingPosition] = useState<ExistingPosition | null>(null)
+  const [showModal, setShowModal] = useState(false)
+  const [actionType, setActionType] = useState<'new' | 'increase' | 'decrease'>('new')
+
+  const currentPrice = 269.22
+  const collateral = (size * currentPrice) / leverage
+  const liquidationPrice = isLong 
+    ? currentPrice * (1 - 1/leverage)
+    : currentPrice * (1 + 1/leverage)
+
+  useEffect(() => {
+    if (isBlockchain) {
+      checkExistingPosition()
+    }
+  }, [isBlockchain])
+
+  const checkExistingPosition = async () => {
+    if (typeof window === 'undefined' || !('solana' in window)) return
+
+    try {
+      // @ts-ignore
+      const { solana } = window
+      if (!solana.isConnected) return
+
+      const userPubkey = new PublicKey(solana.publicKey.toString())
+      const connection = new Connection(RPC_URL, 'confirmed')
+
+      const [positionPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('position'), userPubkey.toBuffer(), MARKET_PDA.toBuffer()],
+        PROGRAM_ID
+      )
+
+      const accountInfo = await connection.getAccountInfo(positionPda)
+
+      if (accountInfo && accountInfo.data.length > 0) {
+        // Parse position data (simplified - adjust offsets as needed)
+        const data = accountInfo.data
+        const sizeUnits = Number(Buffer.from(data.slice(72, 80)).readBigUInt64LE())
+        const isLongByte = data[80]
+        const leverageByte = data[81]
+        const entryPriceCents = Number(Buffer.from(data.slice(82, 90)).readBigUInt64LE())
+
+        setExistingPosition({
+          size: sizeUnits / 10,
+          isLong: isLongByte === 1,
+          leverage: leverageByte,
+          entryPrice: entryPriceCents / 100,
+          collateral: (sizeUnits / 10 * entryPriceCents / 100) / leverageByte
+        })
+      } else {
+        setExistingPosition(null)
+      }
+    } catch (error) {
+      console.error('Error checking position:', error)
+    }
+  }
+
+  const handleOpenPosition = async () => {
+    if (!isBlockchain) {
+      // Demo mode - usar localStorage
+      handleDemoMode()
+      return
+    }
+
+    // Blockchain mode
+    if (existingPosition) {
+      // Mostrar modal de opciones
+      setActionType('new')
+      setShowModal(true)
+    } else {
+      // No hay posición, abrir directamente
+      await openPositionOnChain()
+    }
+  }
+
+  const handleIncreasePosition = () => {
+    setActionType('increase')
+    setShowModal(true)
+  }
+
+  const handleDecreasePosition = () => {
+    setActionType('decrease')
+    setShowModal(true)
+  }
+
+  const handleModalAction = async () => {
+    setShowModal(false)
+
+    if (actionType === 'new') {
+      // Cerrar posición actual y abrir nueva
+      await closeAndOpenNew()
+    } else if (actionType === 'increase') {
+      // Aumentar tamaño de posición
+      await modifyPosition('increase')
+    } else if (actionType === 'decrease') {
+      // Disminuir tamaño de posición
+      await modifyPosition('decrease')
+    }
+  }
+
+  const closeAndOpenNew = async () => {
+    try {
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+      
+      if (!solana.isConnected) {
+        await solana.connect()
+      }
+
+      // 1. Cerrar posición actual
+      const { closePositionOnChain } = await import('@/lib/trading')
+      await closePositionOnChain(solana)
+
+      alert('✅ Posición cerrada exitosamente')
+
+      // Pequeña pausa
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // 2. Abrir nueva posición
+      await openPositionOnChain()
+
+      // Refresh
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const modifyPosition = async (action: 'increase' | 'decrease') => {
+    try {
+      if (!existingPosition) return
+
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+
+      // Calcular nuevo tamaño
+      const newSize = action === 'increase' 
+        ? existingPosition.size + size
+        : Math.max(1.0, existingPosition.size - size)
+
+      // 1. Cerrar posición actual
+      const { closePositionOnChain } = await import('@/lib/trading')
+      await closePositionOnChain(solana)
+
+      alert(`✅ Posición cerrada`)
+
+      // Pausa
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // 2. Abrir con nuevo tamaño (mantener dirección y leverage)
+      const { openPositionOnChain } = await import('@/lib/trading')
+      const result = await openPositionOnChain(
+        solana,
+        newSize,
+        existingPosition.isLong,
+        existingPosition.leverage
+      )
+
+      alert(`✅ Posición ${action === 'increase' ? 'aumentada' : 'disminuida'} a ${newSize} contracts!\n\nTX: ${result.signature}`)
+
+      // Refresh
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const openPositionOnChain = async () => {
+    try {
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+
+      if (!solana.isConnected) {
+        await solana.connect()
+      }
+
+      const { openPositionOnChain } = await import('@/lib/trading')
+      const result = await openPositionOnChain(solana, size, isLong, leverage)
+
+      alert(`✅ Posición abierta!\n\nTX: ${result.signature}`)
+
+      // Refresh
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const handleDemoMode = () => {
+    const positions = JSON.parse(localStorage.getItem('specmarket_positions') || '[]')
+    
+    const newPosition = {
+      id: Date.now().toString(),
+      marketId,
+      marketName: 'POK-BB-MODERN',
+      side: isLong ? 'long' : 'short',
+      size,
+      entryPrice: currentPrice,
+      leverage,
+      collateral,
+      liquidationPrice,
+      timestamp: Date.now(),
+      walletAddress: 'demo'
+    }
+
+    positions.push(newPosition)
+    localStorage.setItem('specmarket_positions', JSON.stringify(positions))
+
+    alert('✅ Posición abierta en modo demo!')
+    window.location.href = '/positions'
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-purple-900">
+      <header className="container mx-auto px-4 py-6 flex justify-between items-center">
+        <Link href="/" className="text-3xl font-bold text-white">
+          SpecMarket
+        </Link>
+        <div className="flex gap-4 items-center">
+          <Link href="/positions" className="text-white hover:text-purple-300 transition">
+            My Positions
+          </Link>
+          <WalletButton />
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8">
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8">
+          {/* Market Info */}
+          <div className="bg-white/10 backdrop-blur rounded-lg p-6">
+            <h2 className="text-3xl font-bold text-white mb-4">POK-BB-MODERN</h2>
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <div className="text-gray-400 text-sm">Mark Price</div>
+                <div className="text-white text-2xl font-bold">${currentPrice}</div>
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">24h Change</div>
+                <div className="text-green-400 text-xl">+2.5%</div>
+              </div>
+            </div>
+
+            {/* Chart Placeholder */}
+            <div className="bg-white/5 rounded-lg h-64 flex items-center justify-center">
+              <div className="text-gray-400">Chart placeholder</div>
+            </div>
+          </div>
+
+          {/* Trading Panel */}
+          <div className="bg-white/10 backdrop-blur rounded-lg p-6">
+            {/* Existing Position Warning */}
+            {isBlockchain && existingPosition && (
+              <div className="mb-6 bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4">
+                <h3 className="text-yellow-200 font-bold mb-2">⚠️ Posición Activa</h3>
+                <div className="text-yellow-100 text-sm mb-3">
+                  <div>{existingPosition.isLong ? 'LONG' : 'SHORT'} {existingPosition.leverage}x</div>
+                  <div>{existingPosition.size} contracts @ ${existingPosition.entryPrice}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleIncreasePosition}
+                    className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition"
+                  >
+                    ➕ Aumentar
+                  </button>
+                  <button
+                    onClick={handleDecreasePosition}
+                    className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold transition"
+                  >
+                    ➖ Reducir
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <h3 className="text-2xl font-bold text-white mb-6">Open Position</h3>
+
+            {/* Mode Toggle */}
+            <div className="mb-6 flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="blockchainMode"
+                checked={isBlockchain}
+                onChange={(e) => setIsBlockchain(e.target.checked)}
+                className="w-5 h-5"
+              />
+              <label htmlFor="blockchainMode" className="text-white cursor-pointer">
+                Blockchain Mode (Real transactions)
+              </label>
+            </div>
+
+            {/* Long/Short Tabs */}
+            <div className="grid grid-cols-2 gap-2 mb-6">
+              <button
+                onClick={() => setIsLong(true)}
+                className={`py-3 rounded-lg font-semibold transition ${
+                  isLong
+                    ? 'bg-green-600 text-white'
+                    : 'bg-white/10 text-gray-400 hover:bg-white/20'
+                }`}
+              >
+                Long
+              </button>
+              <button
+                onClick={() => setIsLong(false)}
+                className={`py-3 rounded-lg font-semibold transition ${
+                  !isLong
+                    ? 'bg-red-600 text-white'
+                    : 'bg-white/10 text-gray-400 hover:bg-white/20'
+                }`}
+              >
+                Short
+              </button>
+            </div>
+
+            {/* Size Input */}
+            <div className="mb-6">
+              <label className="text-gray-300 text-sm mb-2 block">Size (contracts)</label>
+              <input
+                type="number"
+                value={size}
+                onChange={(e) => setSize(parseFloat(e.target.value) || 1.0)}
+                min="1.0"
+                step="0.5"
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            {/* Leverage Slider */}
+            <div className="mb-6">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-300">Leverage</span>
+                <span className="text-white font-bold">{leverage}x</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                value={leverage}
+                onChange={(e) => setLeverage(parseInt(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>1x</span>
+                <span>10x</span>
+              </div>
+            </div>
+
+            {/* Info */}
+            <div className="bg-white/5 rounded-lg p-4 mb-6 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Collateral Required</span>
+                <span className="text-white font-semibold">${collateral.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Liquidation Price</span>
+                <span className="text-red-400 font-semibold">${liquidationPrice.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              onClick={handleOpenPosition}
+              className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-bold text-lg hover:opacity-90 transition"
+            >
+              {isBlockchain ? 'Open Position ON-CHAIN' : 'Open Position (DEMO)'}
+            </button>
+          </div>
+        </div>
+      </main>
+
+      {/* Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold text-white mb-4">
+              {actionType === 'new' && '⚠️ Cerrar y Abrir Nueva Posición'}
+              {actionType === 'increase' && '➕ Aumentar Tamaño de Posición'}
+              {actionType === 'decrease' && '➖ Reducir Tamaño de Posición'}
+            </h3>
+            <p className="text-gray-300 mb-6">
+              {actionType === 'new' && `Esto cerrará tu posición actual y abrirá una nueva de ${size} contracts ${isLong ? 'LONG' : 'SHORT'} ${leverage}x.`}
+              {actionType === 'increase' && `Esto cerrará tu posición actual y abrirá una nueva de ${(existingPosition?.size || 0) + size} contracts (aumenta +${size}).`}
+              {actionType === 'decrease' && `Esto cerrará tu posición actual y abrirá una nueva de ${Math.max(1, (existingPosition?.size || 0) - size)} contracts (reduce -${size}).`}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleModalAction}
+                className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

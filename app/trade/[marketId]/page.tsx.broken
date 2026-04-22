@@ -1,0 +1,616 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
+import { WalletButton } from '@/components/WalletButton'
+import { Connection, PublicKey } from '@solana/web3.js'
+
+const RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com'
+const PROGRAM_ID = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID!)
+const MARKET_PDA = new PublicKey('CA9LFZPdowzA6d3sMwTZo8s8cCLB3etj17MPsMkf6GbL')
+
+interface ExistingPosition {
+  size: number
+  isLong: boolean
+  leverage: number
+  entryPrice: number
+  collateral: number
+  positionPda: string
+}
+
+type ModifyAction = 'increase' | 'decrease' | 'flip' | 'rebalance' | null
+
+export default function TradePage() {
+  const params = useParams()
+  const marketId = params.marketId as string
+  
+  const [size, setSize] = useState(1.0)
+  const [leverage, setLeverage] = useState(5)
+  const [isLong, setIsLong] = useState(true)
+  const [isBlockchain, setIsBlockchain] = useState(false)
+  const [existingPosition, setExistingPosition] = useState<ExistingPosition | null>(null)
+  const [showModifyModal, setShowModifyModal] = useState(false)
+  const [modifyAction, setModifyAction] = useState<ModifyAction>(null)
+  const [modifyAmount, setModifyAmount] = useState(0.5)
+
+  const currentPrice = 269.22
+  const collateral = (size * currentPrice) / leverage
+  const liquidationPrice = isLong 
+    ? currentPrice * (1 - 1/leverage)
+    : currentPrice * (1 + 1/leverage)
+
+  useEffect(() => {
+    if (isBlockchain) {
+      checkExistingPosition()
+    } else {
+      setExistingPosition(null)
+    }
+  }, [isBlockchain])
+
+  const checkExistingPosition = async () => {
+    if (typeof window === 'undefined' || !('solana' in window)) return
+
+    try {
+      // @ts-ignore
+      const { solana } = window
+      if (!solana.isConnected) return
+
+      const userPubkey = new PublicKey(solana.publicKey.toString())
+      const connection = new Connection(RPC_URL, 'confirmed')
+
+      const [positionPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from('position'), userPubkey.toBuffer(), MARKET_PDA.toBuffer()],
+        PROGRAM_ID
+      )
+
+      const accountInfo = await connection.getAccountInfo(positionPda)
+
+      if (accountInfo && accountInfo.data.length > 0) {
+        const data = accountInfo.data
+        
+        let offset = 8
+        offset += 32 // user
+        offset += 32 // market
+        offset += 8  // position_id
+        
+        const sizeBuffer = data.slice(offset, offset + 8)
+        const sizeUnits = Number(sizeBuffer.readBigUInt64LE(0))
+        offset += 8
+        
+        const isLongByte = data[offset]
+        offset += 1
+        
+        const leverageByte = data[offset]
+        offset += 1
+        
+        const entryPriceBuffer = data.slice(offset, offset + 8)
+        const entryPriceCents = Number(entryPriceBuffer.readBigUInt64LE(0))
+
+        const positionData = {
+          size: sizeUnits / 10,
+          isLong: isLongByte === 1,
+          leverage: leverageByte,
+          entryPrice: entryPriceCents / 100,
+          collateral: (sizeUnits / 10 * entryPriceCents / 100) / leverageByte,
+          positionPda: positionPda.toString()
+        }
+
+        console.log('Parsed position:', positionData)
+        setExistingPosition(positionData)
+      } else {
+        console.log('No position found')
+        setExistingPosition(null)
+      }
+    } catch (error) {
+      console.error('Error checking position:', error)
+      setExistingPosition(null)
+    }
+  }
+
+  const handleOpenPosition = async () => {
+    if (!isBlockchain) {
+      handleDemoMode()
+      return
+    }
+
+    // Si hay posición existente, mostrar opciones de modificación
+    if (existingPosition) {
+      alert('⚠️ Ya tienes una posición abierta. Usa las opciones de "Modificar Posición" para cambiarla.')
+      return
+    }
+
+    // Abrir nueva posición
+    await openPositionRaw()
+  }
+
+  const openPositionRaw = async () => {
+    try {
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+
+      if (!solana.isConnected) {
+        await solana.connect()
+      }
+
+      const { openPositionRaw } = await import('@/lib/trading-raw')
+      const result = await openPositionRaw(solana, size, isLong, leverage)
+
+      alert(`✅ Posición abierta!\n\nTX: ${result.signature}`)
+
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const handleModifyPosition = (action: ModifyAction) => {
+    setModifyAction(action)
+    setShowModifyModal(true)
+  }
+
+  const executeModify = async () => {
+    if (!existingPosition || !modifyAction) return
+
+    setShowModifyModal(false)
+
+    try {
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+
+      let newSize = existingPosition.size
+      let newIsLong = existingPosition.isLong
+      let newLeverage = existingPosition.leverage
+
+      // Calcular nuevos parámetros según la acción
+      switch (modifyAction) {
+        case 'increase':
+          newSize = existingPosition.size + modifyAmount
+          break
+        case 'decrease':
+          newSize = Math.max(1.0, existingPosition.size - modifyAmount)
+          break
+        case 'flip':
+          newIsLong = !existingPosition.isLong
+          break
+        case 'rebalance':
+          newLeverage = leverage
+          break
+      }
+
+      console.log('Modifying position:', {
+        action: modifyAction,
+        old: existingPosition,
+        new: { size: newSize, isLong: newIsLong, leverage: newLeverage }
+      })
+
+      // 1. Cerrar posición actual
+      const { closePositionRaw } = await import('@/lib/trading-raw')
+      await closePositionRaw(solana, existingPosition.positionPda)
+
+      alert('✅ Posición anterior cerrada')
+
+      // Pausa de 2 segundos
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // 2. Abrir nueva posición con parámetros modificados
+      const { openPositionRaw } = await import('@/lib/trading-raw')
+      const result = await openPositionRaw(solana, newSize, newIsLong, newLeverage)
+
+      const actionText = {
+        increase: `aumentada a ${newSize} contracts`,
+        decrease: `reducida a ${newSize} contracts`,
+        flip: `invertida a ${newIsLong ? 'LONG' : 'SHORT'}`,
+        rebalance: `rebalanceada a ${newLeverage}x`
+      }
+
+      alert(`✅ Posición ${actionText[modifyAction]}!\n\nTX: ${result.signature}`)
+
+      // Refresh
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error modifying position:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const handleCloseOnly = async () => {
+    if (!existingPosition) return
+
+    if (!confirm('Are you sure you want to close this position?')) return
+
+    try {
+      if (typeof window === 'undefined' || !('solana' in window)) {
+        throw new Error('Phantom wallet not found')
+      }
+
+      // @ts-ignore
+      const { solana } = window
+
+      const { closePositionRaw } = await import('@/lib/trading-raw')
+      const result = await closePositionRaw(solana, existingPosition.positionPda)
+
+      alert(`✅ Position closed!\n\nTX: ${result.signature}`)
+
+      await checkExistingPosition()
+
+    } catch (error: any) {
+      console.error('Error:', error)
+      alert(`❌ Error: ${error.message}`)
+    }
+  }
+
+  const handleDemoMode = () => {
+    const positions = JSON.parse(localStorage.getItem('specmarket_positions') || '[]')
+    
+    const newPosition = {
+      id: Date.now().toString(),
+      marketId,
+      marketName: 'POK-BB-MODERN',
+      side: isLong ? 'long' : 'short',
+      size,
+      entryPrice: currentPrice,
+      leverage,
+      collateral,
+      liquidationPrice,
+      timestamp: Date.now(),
+      walletAddress: 'demo'
+    }
+
+    positions.push(newPosition)
+    localStorage.setItem('specmarket_positions', JSON.stringify(positions))
+
+    alert('✅ Posición abierta en modo demo!')
+    window.location.href = '/positions'
+  }
+
+  const currentPnL = existingPosition 
+    ? (existingPosition.isLong 
+        ? (currentPrice - existingPosition.entryPrice) 
+        : (existingPosition.entryPrice - currentPrice)) * existingPosition.size * existingPosition.leverage
+    : 0
+
+  const currentPnLPercent = existingPosition
+    ? (currentPnL / existingPosition.collateral) * 100
+    : 0
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-purple-900">
+      <header className="container mx-auto px-4 py-6 flex justify-between items-center">
+        <Link href="/" className="text-3xl font-bold text-white">
+          SpecMarket
+        </Link>
+        <div className="flex gap-4 items-center">
+          <Link href="/positions" className="text-white hover:text-purple-300 transition">
+            My Positions
+          </Link>
+          <WalletButton />
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8">
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8">
+          {/* Market Info */}
+          <div className="bg-white/10 backdrop-blur rounded-lg p-6">
+            <h2 className="text-3xl font-bold text-white mb-4">POK-BB-MODERN</h2>
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <div className="text-gray-400 text-sm">Mark Price</div>
+                <div className="text-white text-2xl font-bold">${currentPrice}</div>
+              </div>
+              <div>
+                <div className="text-gray-400 text-sm">24h Change</div>
+                <div className="text-green-400 text-xl">+2.5%</div>
+              </div>
+            </div>
+
+            {/* Chart Placeholder */}
+            <div className="bg-white/5 rounded-lg h-64 flex items-center justify-center">
+              <div className="text-gray-400">TradingView Chart</div>
+            </div>
+          </div>
+
+          {/* Trading Panel */}
+          <div className="bg-white/10 backdrop-blur rounded-lg p-6">
+            <h3 className="text-2xl font-bold text-white mb-6">
+              {existingPosition ? 'Modify Position' : 'Open Position'}
+            </h3>
+
+            {/* Mode Toggle */}
+            <div className="mb-6 flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="blockchainMode"
+                checked={isBlockchain}
+                onChange={(e) => setIsBlockchain(e.target.checked)}
+                className="w-5 h-5"
+              />
+              <label htmlFor="blockchainMode" className="text-white cursor-pointer">
+                Blockchain Mode (Real transactions)
+              </label>
+            </div>
+
+            {/* Existing Position Card */}
+            {isBlockchain && existingPosition && (
+              <div className="mb-6 bg-gradient-to-r from-purple-600/20 to-pink-600/20 border border-purple-500/50 rounded-lg p-4">
+                <h4 className="text-white font-bold mb-3 flex items-center gap-2">
+                  <span className="text-2xl">📊</span> Current Position
+                </h4>
+                
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <div className="text-gray-300 text-xs">Direction</div>
+                    <div className={`font-bold ${existingPosition.isLong ? 'text-green-400' : 'text-red-400'}`}>
+                      {existingPosition.isLong ? 'LONG' : 'SHORT'} {existingPosition.leverage}x
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-300 text-xs">Size</div>
+                    <div className="text-white font-semibold">{existingPosition.size} contracts</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-300 text-xs">Entry Price</div>
+                    <div className="text-white font-semibold">${existingPosition.entryPrice.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-300 text-xs">Current PnL</div>
+                    <div className={`font-bold ${currentPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ${currentPnL.toFixed(2)} ({currentPnLPercent >= 0 ? '+' : ''}{currentPnLPercent.toFixed(1)}%)
+                    </div>
+                  </div>
+                </div>
+
+                  <button
+                    onClick={() => handleModifyPosition('increase')}
+                    className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ➕ Increase Size
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('decrease')}
+                    className="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ➖ Decrease Size
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('flip')}
+                    className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    🔄 Flip Direction
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('rebalance')}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ⚡ Change Leverage
+                  </button>
+                  <button
+                    onClick={handleCloseOnly}
+                    className="col-span-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ❌ Close Position
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleModifyPosition('increase')}
+                    className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ➕ Increase Size
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('decrease')}
+                    className="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ➖ Decrease Size
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('flip')}
+                    className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    🔄 Flip Direction
+                  </button>
+                  <button
+                    onClick={() => handleModifyPosition('rebalance')}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm transition"
+                  >
+                    ⚡ Change Leverage
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* New Position Form */}
+            {(!isBlockchain || !existingPosition) && (
+              <>
+                {/* Long/Short Tabs */}
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                  <button
+                    onClick={() => setIsLong(true)}
+                    className={`py-3 rounded-lg font-semibold transition ${
+                      isLong
+                        ? 'bg-green-600 text-white'
+                        : 'bg-white/10 text-gray-400 hover:bg-white/20'
+                    }`}
+                  >
+                    Long
+                  </button>
+                  <button
+                    onClick={() => setIsLong(false)}
+                    className={`py-3 rounded-lg font-semibold transition ${
+                      !isLong
+                        ? 'bg-red-600 text-white'
+                        : 'bg-white/10 text-gray-400 hover:bg-white/20'
+                    }`}
+                  >
+                    Short
+                  </button>
+                </div>
+
+                {/* Size Input */}
+                <div className="mb-6">
+                  <label className="text-gray-300 text-sm mb-2 block">Size (contracts)</label>
+                  <input
+                    type="number"
+                    value={size}
+                    onChange={(e) => setSize(parseFloat(e.target.value) || 1.0)}
+                    min="1.0"
+                    step="0.5"
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                {/* Leverage Slider */}
+                <div className="mb-6">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-gray-300">Leverage</span>
+                    <span className="text-white font-bold">{leverage}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={leverage}
+                    onChange={(e) => setLeverage(parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 mt-1">
+                    <span>1x</span>
+                    <span>10x</span>
+                  </div>
+                </div>
+
+                {/* Info */}
+                <div className="bg-white/5 rounded-lg p-4 mb-6 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Collateral Required</span>
+                    <span className="text-white font-semibold">${collateral.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">Liquidation Price</span>
+                    <span className="text-red-400 font-semibold">${liquidationPrice.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <button
+                  onClick={handleOpenPosition}
+                  className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-bold text-lg hover:opacity-90 transition"
+                >
+                  {isBlockchain ? 'Open Position ON-CHAIN' : 'Open Position (DEMO)'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </main>
+
+      {/* Modify Modal */}
+      {showModifyModal && modifyAction && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold text-white mb-4">
+              {modifyAction === 'increase' && '➕ Increase Position Size'}
+              {modifyAction === 'decrease' && '➖ Decrease Position Size'}
+              {modifyAction === 'flip' && '🔄 Flip Position Direction'}
+              {modifyAction === 'rebalance' && '⚡ Change Leverage'}
+            </h3>
+
+            {(modifyAction === 'increase' || modifyAction === 'decrease') && (
+              <div className="mb-4">
+                <label className="text-gray-300 text-sm mb-2 block">
+                  {modifyAction === 'increase' ? 'Add' : 'Remove'} (contracts)
+                </label>
+                <input
+                  type="number"
+                  value={modifyAmount}
+                  onChange={(e) => setModifyAmount(parseFloat(e.target.value) || 0.5)}
+                  min="0.5"
+                  step="0.5"
+                  className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white"
+                />
+                <div className="text-gray-400 text-sm mt-2">
+                  New size: {modifyAction === 'increase' 
+                    ? (existingPosition!.size + modifyAmount).toFixed(1)
+                    : Math.max(1, existingPosition!.size - modifyAmount).toFixed(1)} contracts
+                </div>
+              </div>
+            )}
+
+            {modifyAction === 'flip' && existingPosition && (
+              <div className="mb-4 text-gray-300">
+                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                  <div>
+                    <div className="text-sm text-gray-400">Current</div>
+                    <div className={`font-bold ${existingPosition.isLong ? 'text-green-400' : 'text-red-400'}`}>
+                      {existingPosition.isLong ? 'LONG' : 'SHORT'}
+                    </div>
+                  </div>
+                  <div className="text-2xl">→</div>
+                  <div>
+                    <div className="text-sm text-gray-400">New</div>
+                    <div className={`font-bold ${!existingPosition.isLong ? 'text-green-400' : 'text-red-400'}`}>
+                      {!existingPosition.isLong ? 'LONG' : 'SHORT'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {modifyAction === 'rebalance' && (
+              <div className="mb-4">
+                <label className="text-gray-300 text-sm mb-2 block">New Leverage</label>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={leverage}
+                  onChange={(e) => setLeverage(parseInt(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-sm text-gray-400 mt-1">
+                  <span>1x</span>
+                  <span className="text-white font-bold">{leverage}x</span>
+                  <span>10x</span>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3 mb-4">
+              <div className="text-yellow-200 text-sm">
+                ⚠️ This will close your current position and open a new one with the modified parameters.
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowModifyModal(false)}
+                className="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeModify}
+                className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
