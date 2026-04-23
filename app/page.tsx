@@ -1,241 +1,159 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { WalletButton } from '@/components/WalletButton'
 import { MARKETS } from '@/lib/constants'
 
 export default function HomePage() {
-interface Market {
-  id: string
-  name: string
-  displayName: string
-  marketPda: string
-  currentPrice: number
-  priceSource: string
-  category: string
-  enabled: boolean
-  createdAt: number
-}
-
-export default function HomePage() {
-  const [markets, setMarkets] = useState<Market[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
-    loadMarkets()
+    setMenuOpen(false)
   }, [])
 
-  const loadMarkets = () => {
-    const stored = localStorage.getItem('specmarket_markets')
-    if (stored) {
-      const allMarkets = JSON.parse(stored)
-      setMarkets(allMarkets.filter((m: Market) => m.enabled))
-    } else {
-      // Mercado por defecto
-      const defaultMarket: Market = {
-        id: 'pok-bb-modern',
-        name: 'POK-BB-MODERN',
-        displayName: 'Pokémon Modern Booster Box',
-        marketPda: 'CA9LFZPdowzA6d3sMwTZo8s8cCLB3etj17MPsMkf6GbL',
-        currentPrice: 269.22,
-        priceSource: 'tcgplayer',
-        category: 'pokemon',
-        enabled: true,
-        createdAt: Date.now()
-      }
-      setMarkets([defaultMarket])
-    }
-  }
+  const categories = ['all', ...Array.from(new Set(MARKETS.map(m => m.category)))]
 
-  const categories = ['all', ...new Set(markets.map(m => m.category))]
-  
-  const filteredMarkets = selectedCategory === 'all' 
-    ? markets 
-    : markets.filter(m => m.category === selectedCategory)
-
-  const get24hChange = () => {
-    // Placeholder - en producción vendría de API
-    return (Math.random() * 10 - 5).toFixed(2)
-  }
+  const filteredMarkets = selectedCategory === 'all'
+    ? MARKETS
+    : MARKETS.filter(m => m.category === selectedCategory)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-purple-900">
-      <header className="container mx-auto px-4 py-6 flex justify-between items-center">
-        <Link href="/" className="text-3xl font-bold text-white">
-          SpecMarket
-        </Link>
-        <div className="flex gap-4 items-center">
-          <Link href="/markets" className="text-white hover:text-purple-300 transition">
-            Manage Markets
-          </Link>
-          <Link href="/positions" className="text-white hover:text-purple-300 transition">
-            My Positions
-          </Link>
-          <WalletButton />
-        </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-12">
-        {/* Hero Section */}
-        <div className="text-center mb-16">
-          <h1 className="text-6xl font-bold text-white mb-4">
-            Trade Collectibles <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">On-Chain</span>
-          </h1>
-          <p className="text-xl text-gray-300 mb-8">
-            Perpetual futures for Pokémon, Magic, Yu-Gi-Oh!, and more
-          </p>
-          <div className="flex gap-4 justify-center">
-            <Link
-              href={markets.length > 0 ? `/trade/${markets[0].id}` : '/markets'}
-              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-bold text-lg hover:opacity-90 transition"
-            >
-              Start Trading
-            </Link>
-            <Link
-              href="/markets"
-              className="px-8 py-4 bg-white/10 backdrop-blur text-white rounded-lg font-bold text-lg hover:bg-white/20 transition"
-            >
-              Add Markets
-            </Link>
-          </div>
-        </div>
-
-        {/* Stats */}
-        <div className="grid md:grid-cols-4 gap-6 mb-12">
-          <div className="bg-white/10 backdrop-blur rounded-lg p-6 text-center">
-            <div className="text-gray-400 text-sm mb-2">Total Markets</div>
-            <div className="text-3xl font-bold text-white">{markets.length}</div>
-          </div>
-          <div className="bg-white/10 backdrop-blur rounded-lg p-6 text-center">
-            <div className="text-gray-400 text-sm mb-2">24h Volume</div>
-            <div className="text-3xl font-bold text-white">$12.5K</div>
-          </div>
-          <div className="bg-white/10 backdrop-blur rounded-lg p-6 text-center">
-            <div className="text-gray-400 text-sm mb-2">Total OI</div>
-            <div className="text-3xl font-bold text-white">$45.2K</div>
-          </div>
-          <div className="bg-white/10 backdrop-blur rounded-lg p-6 text-center">
-            <div className="text-gray-400 text-sm mb-2">Active Traders</div>
-            <div className="text-3xl font-bold text-white">127</div>
-          </div>
-        </div>
-
-        {/* Markets Section */}
-        <div className="mb-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-bold text-white">Available Markets</h2>
-            
-            {/* Category Filter */}
-            <div className="flex gap-2">
-              {categories.map((category) => (
-                <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`px-4 py-2 rounded-lg font-semibold transition capitalize ${
-                    selectedCategory === category
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                  }`}
-                >
-                  {category}
-                </button>
-              ))}
+      <header className="border-b border-white/10 bg-black/20 backdrop-blur sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+                SpecMarket
+              </h1>
+              <span className="hidden md:block text-gray-400 text-sm">
+                On-Chain Collectibles Futures
+              </span>
             </div>
-          </div>
 
-          {filteredMarkets.length === 0 ? (
-            <div className="bg-white/10 backdrop-blur rounded-lg p-12 text-center">
-              <p className="text-gray-300 text-lg mb-4">No markets available</p>
-              <Link
-                href="/markets"
-                className="inline-block px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition"
-              >
-                Add Your First Market
+            <div className="hidden md:flex gap-4 items-center">
+              <Link href="/analytics" className="text-white hover:text-purple-300 transition">
+                Analytics
               </Link>
+              <Link href="/positions" className="text-white hover:text-purple-300 transition">
+                My Positions
+              </Link>
+              <WalletButton />
             </div>
-          ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredMarkets.map((market) => {
-                const change = parseFloat(get24hChange())
-                return (
-                  <Link
-                    key={market.id}
-                    href={`/trade/${market.id}`}
-                    className="bg-white/10 backdrop-blur rounded-lg p-6 hover:bg-white/20 transition group"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-white group-hover:text-purple-300 transition">
-                          {market.name}
-                        </h3>
-                        <p className="text-gray-400 text-sm">{market.displayName}</p>
-                      </div>
-                      <span className="px-3 py-1 bg-purple-600/30 text-purple-200 rounded-full text-xs capitalize">
-                        {market.category}
-                      </span>
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-gray-400 text-xs mb-1">Mark Price</div>
-                        <div className="text-white text-2xl font-bold">
-                          ${market.currentPrice.toFixed(2)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400 text-xs mb-1">24h Change</div>
-                        <div className={`text-xl font-bold ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {change >= 0 ? '+' : ''}{change}%
-                        </div>
-                      </div>
-                    </div>
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="md:hidden text-white text-2xl"
+            >
+              {menuOpen ? '✕' : '☰'}
+            </button>
+          </div>
 
-                    <div className="mt-4 pt-4 border-t border-white/10">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Price Source</span>
-                        <span className="text-white capitalize">{market.priceSource}</span>
-                      </div>
-                    </div>
-                  </Link>
-                )
-              })}
+          {menuOpen && (
+            <div className="md:hidden mt-4 pb-4 space-y-3">
+              <Link
+                href="/analytics"
+                className="block text-white hover:text-purple-300 transition py-2"
+                onClick={() => setMenuOpen(false)}
+              >
+                Analytics
+              </Link>
+              <Link
+                href="/positions"
+                className="block text-white hover:text-purple-300 transition py-2"
+                onClick={() => setMenuOpen(false)}
+              >
+                My Positions
+              </Link>
+              <WalletButton />
             </div>
           )}
         </div>
+      </header>
 
-        {/* Features */}
-        <div className="grid md:grid-cols-3 gap-8 mt-16">
-          <div className="text-center">
-            <div className="text-5xl mb-4">⚡</div>
-            <h3 className="text-xl font-bold text-white mb-2">Up to 10x Leverage</h3>
-            <p className="text-gray-400">
-              Amplify your positions with flexible leverage options
-            </p>
+      <main className="container mx-auto px-4 py-8">
+        <div className="text-center mb-12">
+          <h2 className="text-4xl md:text-6xl font-bold text-white mb-4">
+            Trade Collectibles Futures
+          </h2>
+          <p className="text-xl text-gray-300 mb-8">
+            Long or short your favorite collectibles with up to 10x leverage
+          </p>
+        </div>
+
+        <div className="mb-8">
+          <div className="flex gap-3 overflow-x-auto pb-4">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-6 py-2 rounded-full font-semibold whitespace-nowrap transition ${
+                  selectedCategory === cat
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
+                    : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                }`}
+              >
+                {cat === 'all' ? 'All Markets' : cat.charAt(0).toUpperCase() + cat.slice(1)}
+              </button>
+            ))}
           </div>
-          <div className="text-center">
-            <div className="text-5xl mb-4">🔒</div>
-            <h3 className="text-xl font-bold text-white mb-2">On-Chain Settlement</h3>
-            <p className="text-gray-400">
-              All positions settled on Solana blockchain
-            </p>
-          </div>
-          <div className="text-center">
-            <div className="text-5xl mb-4">📊</div>
-            <h3 className="text-xl font-bold text-white mb-2">Real-Time Prices</h3>
-            <p className="text-gray-400">
-              Live price feeds from TCGPlayer and other sources
-            </p>
-          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredMarkets.map((market) => (
+            <Link
+              key={market.id}
+              href={`/trade/${market.id}`}
+              className="bg-white/10 backdrop-blur rounded-lg p-6 hover:bg-white/15 transition border border-white/10 hover:border-purple-500/50"
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-1">{market.name}</h3>
+                  <p className="text-sm text-gray-400">{market.displayName}</p>
+                </div>
+                <span className="px-3 py-1 bg-purple-600/30 text-purple-200 rounded-full text-xs">
+                  {market.category}
+                </span>
+              </div>
+
+              <div className="mb-4">
+                <div className="text-sm text-gray-400 mb-1">Mark Price</div>
+                <div className="text-3xl font-bold text-white">
+                  ${market.currentPrice.toLocaleString()}
+                </div>
+              </div>
+
+              <div className="flex justify-between text-sm">
+                <div>
+                  <div className="text-gray-400">24h Change</div>
+                  <div className="text-green-400 font-semibold">
+                    +{(Math.random() * 5).toFixed(2)}%
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-gray-400">Volume</div>
+                  <div className="text-white font-semibold">
+                    ${(Math.random() * 50 + 10).toFixed(0)}K
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <button className="w-full py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-semibold hover:opacity-90 transition">
+                  Trade Now →
+                </button>
+              </div>
+            </Link>
+          ))}
         </div>
       </main>
 
-      <footer className="container mx-auto px-4 py-8 mt-16 border-t border-white/10">
-        <div className="text-center text-gray-400">
-          <p>SpecMarket - Decentralized Collectibles Perpetuals Exchange</p>
-          <p className="text-sm mt-2">Built on Solana Devnet</p>
+      <footer className="border-t border-white/10 bg-black/20 backdrop-blur mt-16">
+        <div className="container mx-auto px-4 py-8 text-center text-gray-400">
+          <p>SpecMarket - On-Chain Collectibles Futures Platform</p>
+          <p className="text-sm mt-2">Powered by Solana</p>
         </div>
       </footer>
     </div>
