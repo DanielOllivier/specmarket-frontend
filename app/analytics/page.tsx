@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic'
 'use client'
+
 
 import { useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
