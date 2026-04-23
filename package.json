@@ -32,7 +32,6 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": "18.20.8",
-    "npm": "10.x"
+    "node": "24.x"
   }
 }
