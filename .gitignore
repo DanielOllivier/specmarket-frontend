@@ -34,3 +34,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Wallet files
+wallet.json
+**/id.json
+*.keypair
+*keypair*.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Solana config
+**/.config/solana/*.json
