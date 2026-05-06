@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -33,69 +33,85 @@ interface PriceChartProps {
 export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1d'>('5m')
   const [chartData, setChartData] = useState<any>(null)
+  const [priceHistory, setPriceHistory] = useState<number[]>([])
+  const isInitialized = useRef(false)
 
+  // Inicializar historia solo una vez
   useEffect(() => {
-    generateChartData()
-    
-    // Actualizar más frecuentemente para timeframes cortos
-    const updateInterval = timeframe === '1m' ? 2000 : 
-                          timeframe === '5m' ? 5000 : 
-                          timeframe === '15m' ? 10000 : 
-                          timeframe === '1h' ? 30000 : 60000
+    if (!isInitialized.current) {
+      initializePriceHistory()
+      isInitialized.current = true
+    }
+  }, [])
 
-    const interval = setInterval(generateChartData, updateInterval)
+  // Actualizar gráfico cuando cambia el precio o timeframe
+  useEffect(() => {
+    if (priceHistory.length > 0) {
+      updateChart()
+    }
+  }, [priceHistory, timeframe])
+
+  // Actualizar precio actual suavemente
+  useEffect(() => {
+    if (priceHistory.length === 0) return
+
+    const interval = setInterval(() => {
+      setPriceHistory(prev => {
+        const lastPrice = prev[prev.length - 1]
+        const diff = currentPrice - lastPrice
+        
+        // Si el cambio es muy pequeño, no actualizar
+        if (Math.abs(diff) < currentPrice * 0.0001) {
+          return prev
+        }
+        
+        // Movimiento suave hacia el nuevo precio (10% del camino)
+        const newPrice = lastPrice + (diff * 0.1)
+        
+        // Mantener últimos 500 puntos
+        return [...prev.slice(-499), newPrice]
+      })
+    }, 2000)
+
     return () => clearInterval(interval)
-  }, [currentPrice, timeframe])
+  }, [currentPrice])
 
-  const generateChartData = () => {
-    // Configuración por timeframe
-    const config: Record<string, { points: number; interval: number; volatility: number; drift: number }> = {
-      '1m': { 
-        points: 60,      // Últimos 60 minutos
-        interval: 60,    // 1 minuto
-        volatility: 0.001, // 0.1% volatilidad
-        drift: 0.0002    // Muy poco drift
-      },
-      '5m': { 
-        points: 72,      // Últimas 6 horas (72 * 5min)
-        interval: 300,   // 5 minutos
-        volatility: 0.003,
-        drift: 0.0005
-      },
-      '15m': { 
-        points: 96,      // Últimas 24 horas (96 * 15min)
-        interval: 900,   // 15 minutos
-        volatility: 0.005,
-        drift: 0.001
-      },
-      '1h': { 
-        points: 168,     // Última semana (168 horas)
-        interval: 3600,  // 1 hora
-        volatility: 0.01,
-        drift: 0.002
-      },
-      '1d': { 
-        points: 90,      // Últimos 90 días
-        interval: 86400, // 1 día
-        volatility: 0.03,
-        drift: 0.005
-      },
+  const initializePriceHistory = () => {
+    // Generar 200 puntos de historia inicial
+    const history: number[] = []
+    let price = currentPrice * 0.98
+    
+    for (let i = 0; i < 200; i++) {
+      const drift = (currentPrice - price) * 0.01
+      const noise = (Math.random() - 0.5) * currentPrice * 0.002
+      price = Math.max(price + drift + noise, currentPrice * 0.5)
+      history.push(price)
+    }
+    
+    history.push(currentPrice)
+    setPriceHistory(history)
+  }
+
+  const updateChart = () => {
+    const config: Record<string, { points: number; interval: number; label: string }> = {
+      '1m': { points: 60, interval: 60, label: 'Last hour' },
+      '5m': { points: 72, interval: 300, label: 'Last 6 hours' },
+      '15m': { points: 96, interval: 900, label: 'Last 24 hours' },
+      '1h': { points: 168, interval: 3600, label: 'Last week' },
+      '1d': { points: 90, interval: 86400, label: 'Last 90 days' },
     }
 
-    const { points, interval, volatility, drift } = config[timeframe]
+    const { points, interval } = config[timeframe]
+    
+    // Usar los últimos N puntos de la historia
+    const dataPoints = priceHistory.slice(-points)
     
     const labels: string[] = []
-    const prices: number[] = []
-    
     const now = new Date()
     
-    // Generar precios históricos con random walk
-    let price = currentPrice * (1 - (drift * points / 2)) // Empezar más abajo
-    
-    for (let i = points; i >= 0; i--) {
-      const time = new Date(now.getTime() - (i * interval * 1000))
+    dataPoints.forEach((_, i) => {
+      const time = new Date(now.getTime() - ((dataPoints.length - i - 1) * interval * 1000))
       
-      // Formatear label según timeframe
       if (timeframe === '1d') {
         labels.push(time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
       } else if (timeframe === '1h') {
@@ -103,28 +119,14 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
       } else {
         labels.push(time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
       }
-      
-      // Random walk con drift hacia precio actual
-      const driftTowardsCurrent = (currentPrice - price) * drift
-      const randomWalk = (Math.random() - 0.5) * (currentPrice * volatility * 2)
-      
-      price = price + driftTowardsCurrent + randomWalk
-      
-      // Evitar precios negativos
-      price = Math.max(price, currentPrice * 0.5)
-      
-      prices.push(price)
-    }
-    
-    // Último punto es siempre el precio actual
-    prices[prices.length - 1] = currentPrice
-    
+    })
+
     setChartData({
       labels,
       datasets: [
         {
           label: 'Price',
-          data: prices,
+          data: dataPoints,
           borderColor: 'rgb(168, 85, 247)',
           backgroundColor: 'rgba(168, 85, 247, 0.2)',
           fill: true,
@@ -140,6 +142,10 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 750,
+      easing: 'easeInOutQuart' as const,
+    },
     plugins: {
       legend: {
         display: false,
@@ -170,10 +176,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         ticks: {
           color: '#9ca3af',
           maxRotation: 0,
-          autoSkipPadding: timeframe === '1d' ? 10 : 
-                          timeframe === '1h' ? 15 : 
-                          timeframe === '15m' ? 8 : 
-                          timeframe === '5m' ? 6 : 5,
+          autoSkipPadding: 20,
         },
       },
       y: {
@@ -203,13 +206,11 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
     )
   }
 
-  // Calcular cambio desde el primer punto visible
   const firstPrice = chartData.datasets[0].data[0]
   const lastPrice = chartData.datasets[0].data[chartData.datasets[0].data.length - 1]
   const priceChange = lastPrice - firstPrice
   const priceChangePercent = (priceChange / firstPrice) * 100
 
-  // Timeframe labels
   const timeframeLabels: Record<string, string> = {
     '1m': 'Last 60 minutes',
     '5m': 'Last 6 hours',
@@ -220,7 +221,6 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
 
   return (
     <div className="bg-white/10 backdrop-blur rounded-lg p-4">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-4">
         <div>
           <h3 className="text-white font-bold text-lg">{marketName}</h3>
@@ -232,7 +232,6 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
           </div>
         </div>
 
-        {/* Timeframe Selector */}
         <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
           {(['1m', '5m', '15m', '1h', '1d'] as const).map((tf) => (
             <button
@@ -250,14 +249,12 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         </div>
       </div>
 
-      {/* Chart */}
       <div className="h-[400px]">
         <Line data={chartData} options={options} />
       </div>
 
-      {/* Info */}
       <div className="mt-4 flex flex-col md:flex-row justify-between gap-2 text-sm">
-        <div className="flex gap-6">
+        <div className="flex gap-6 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-purple-500 rounded" />
             <span className="text-gray-400">Current: ${currentPrice.toLocaleString()}</span>
@@ -270,7 +267,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
           </div>
         </div>
         <div className="text-gray-400 text-xs">
-          Simulated data • Updates every {timeframe === '1m' ? '2s' : timeframe === '5m' ? '5s' : '10s'}
+          Live price tracking
         </div>
       </div>
     </div>
