@@ -33,77 +33,91 @@ interface PriceChartProps {
 export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1d'>('5m')
   const [chartData, setChartData] = useState<any>(null)
-  const [historicalPrices, setHistoricalPrices] = useState<number[]>([])
 
   useEffect(() => {
-    // Inicializar precios históricos solo una vez
-    if (historicalPrices.length === 0) {
-      generateInitialHistory()
-    }
-  }, [])
+    generateChartData()
+    
+    // Actualizar más frecuentemente para timeframes cortos
+    const updateInterval = timeframe === '1m' ? 2000 : 
+                          timeframe === '5m' ? 5000 : 
+                          timeframe === '15m' ? 10000 : 
+                          timeframe === '1h' ? 30000 : 60000
 
-  useEffect(() => {
-    if (historicalPrices.length > 0) {
-      generateChartData()
-    }
-  }, [currentPrice, timeframe, historicalPrices])
-
-  const generateInitialHistory = () => {
-    // Generar historia realista basada en el precio actual
-    const history: number[] = []
-    let price = currentPrice * 0.98 // Empezar 2% abajo
-    
-    const volatility = currentPrice * 0.002 // 0.2% de volatilidad por punto
-    
-    for (let i = 0; i < 50; i++) {
-      // Caminar aleatoriamente hacia el precio actual
-      const drift = (currentPrice - price) * 0.02 // Drift hacia precio actual
-      const randomWalk = (Math.random() - 0.5) * volatility
-      
-      price = price + drift + randomWalk
-      history.push(price)
-    }
-    
-    // Añadir precio actual al final
-    history.push(currentPrice)
-    
-    setHistoricalPrices(history)
-  }
+    const interval = setInterval(generateChartData, updateInterval)
+    return () => clearInterval(interval)
+  }, [currentPrice, timeframe])
 
   const generateChartData = () => {
-    const intervals: Record<string, number> = {
-      '1m': 60,
-      '5m': 300,
-      '15m': 900,
-      '1h': 3600,
-      '1d': 86400,
+    // Configuración por timeframe
+    const config: Record<string, { points: number; interval: number; volatility: number; drift: number }> = {
+      '1m': { 
+        points: 60,      // Últimos 60 minutos
+        interval: 60,    // 1 minuto
+        volatility: 0.001, // 0.1% volatilidad
+        drift: 0.0002    // Muy poco drift
+      },
+      '5m': { 
+        points: 72,      // Últimas 6 horas (72 * 5min)
+        interval: 300,   // 5 minutos
+        volatility: 0.003,
+        drift: 0.0005
+      },
+      '15m': { 
+        points: 96,      // Últimas 24 horas (96 * 15min)
+        interval: 900,   // 15 minutos
+        volatility: 0.005,
+        drift: 0.001
+      },
+      '1h': { 
+        points: 168,     // Última semana (168 horas)
+        interval: 3600,  // 1 hora
+        volatility: 0.01,
+        drift: 0.002
+      },
+      '1d': { 
+        points: 90,      // Últimos 90 días
+        interval: 86400, // 1 día
+        volatility: 0.03,
+        drift: 0.005
+      },
     }
-    
-    const interval = intervals[timeframe]
-    const numPoints = Math.min(50, historicalPrices.length)
+
+    const { points, interval, volatility, drift } = config[timeframe]
     
     const labels: string[] = []
     const prices: number[] = []
     
     const now = new Date()
     
-    // Usar los últimos N puntos de la historia
-    const startIndex = Math.max(0, historicalPrices.length - numPoints)
-    const dataPoints = historicalPrices.slice(startIndex)
+    // Generar precios históricos con random walk
+    let price = currentPrice * (1 - (drift * points / 2)) // Empezar más abajo
     
-    for (let i = 0; i < dataPoints.length; i++) {
-      const time = new Date(now.getTime() - ((dataPoints.length - i) * interval * 1000))
+    for (let i = points; i >= 0; i--) {
+      const time = new Date(now.getTime() - (i * interval * 1000))
       
+      // Formatear label según timeframe
       if (timeframe === '1d') {
         labels.push(time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
       } else if (timeframe === '1h') {
-        labels.push(time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
+        labels.push(time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
       } else {
         labels.push(time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
       }
       
-      prices.push(dataPoints[i])
+      // Random walk con drift hacia precio actual
+      const driftTowardsCurrent = (currentPrice - price) * drift
+      const randomWalk = (Math.random() - 0.5) * (currentPrice * volatility * 2)
+      
+      price = price + driftTowardsCurrent + randomWalk
+      
+      // Evitar precios negativos
+      price = Math.max(price, currentPrice * 0.5)
+      
+      prices.push(price)
     }
+    
+    // Último punto es siempre el precio actual
+    prices[prices.length - 1] = currentPrice
     
     setChartData({
       labels,
@@ -122,32 +136,6 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
       ],
     })
   }
-
-  // Actualizar precio actual suavemente
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setHistoricalPrices(prev => {
-        if (prev.length === 0) return prev
-        
-        const lastPrice = prev[prev.length - 1]
-        const priceDiff = currentPrice - lastPrice
-        
-        // Si la diferencia es pequeña, solo ajustar suavemente
-        if (Math.abs(priceDiff) < currentPrice * 0.001) {
-          return prev // No cambiar si es menos del 0.1%
-        }
-        
-        // Movimiento suave hacia el nuevo precio
-        const newPrice = lastPrice + (priceDiff * 0.3) + ((Math.random() - 0.5) * currentPrice * 0.001)
-        
-        // Mantener solo últimos 100 puntos
-        const updated = [...prev.slice(-99), newPrice]
-        return updated
-      })
-    }, 3000) // Actualizar cada 3 segundos
-
-    return () => clearInterval(interval)
-  }, [currentPrice])
 
   const options = {
     responsive: true,
@@ -182,7 +170,10 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         ticks: {
           color: '#9ca3af',
           maxRotation: 0,
-          autoSkipPadding: 20,
+          autoSkipPadding: timeframe === '1d' ? 10 : 
+                          timeframe === '1h' ? 15 : 
+                          timeframe === '15m' ? 8 : 
+                          timeframe === '5m' ? 6 : 5,
         },
       },
       y: {
@@ -218,6 +209,15 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const priceChange = lastPrice - firstPrice
   const priceChangePercent = (priceChange / firstPrice) * 100
 
+  // Timeframe labels
+  const timeframeLabels: Record<string, string> = {
+    '1m': 'Last 60 minutes',
+    '5m': 'Last 6 hours',
+    '15m': 'Last 24 hours',
+    '1h': 'Last 7 days',
+    '1d': 'Last 90 days',
+  }
+
   return (
     <div className="bg-white/10 backdrop-blur rounded-lg p-4">
       {/* Header */}
@@ -225,7 +225,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         <div>
           <h3 className="text-white font-bold text-lg">{marketName}</h3>
           <div className="flex items-center gap-3 mt-1">
-            <span className="text-gray-400 text-sm">Price Chart</span>
+            <span className="text-gray-400 text-sm">{timeframeLabels[timeframe]}</span>
             <span className={`text-sm font-semibold ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {priceChange >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
             </span>
@@ -262,9 +262,15 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
             <div className="w-3 h-3 bg-purple-500 rounded" />
             <span className="text-gray-400">Current: ${currentPrice.toLocaleString()}</span>
           </div>
+          <div className="text-gray-400">
+            High: ${Math.max(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
+          <div className="text-gray-400">
+            Low: ${Math.min(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
         </div>
-        <div className="text-gray-400">
-          Updates smoothly based on market price
+        <div className="text-gray-400 text-xs">
+          Simulated data • Updates every {timeframe === '1m' ? '2s' : timeframe === '5m' ? '5s' : '10s'}
         </div>
       </div>
     </div>
