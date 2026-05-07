@@ -30,95 +30,161 @@ interface PriceChartProps {
   currentPrice: number
 }
 
+interface PricePoint {
+  price: number
+  timestamp: number
+}
+
 export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const [timeframe, setTimeframe] = useState<'1m' | '5m' | '15m' | '1h' | '1d'>('5m')
   const [chartData, setChartData] = useState<any>(null)
-  const [priceHistory, setPriceHistory] = useState<number[]>([])
+  const [priceHistory, setPriceHistory] = useState<PricePoint[]>([])
   const isInitialized = useRef(false)
+  const storageKey = `chart_${marketName}_history`
 
-  // Inicializar historia solo una vez
+  // Cargar historia del localStorage o inicializar
   useEffect(() => {
     if (!isInitialized.current) {
-      initializePriceHistory()
+      const saved = localStorage.getItem(storageKey)
+      
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved)
+          // Limpiar datos muy viejos (más de 7 días)
+          const weekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
+          const filtered = parsed.filter((p: PricePoint) => p.timestamp > weekAgo)
+          setPriceHistory(filtered.length > 0 ? filtered : [])
+        } catch (e) {
+          console.error('Error loading history:', e)
+        }
+      }
+      
+      if (priceHistory.length === 0) {
+        initializePriceHistory()
+      }
+      
       isInitialized.current = true
     }
   }, [])
 
-  // Actualizar gráfico cuando cambia el precio o timeframe
+  // Guardar historia en localStorage
+  useEffect(() => {
+    if (priceHistory.length > 0) {
+      localStorage.setItem(storageKey, JSON.stringify(priceHistory.slice(-1000)))
+    }
+  }, [priceHistory])
+
+  // Actualizar gráfico cuando cambia
   useEffect(() => {
     if (priceHistory.length > 0) {
       updateChart()
     }
   }, [priceHistory, timeframe])
 
-  // Actualizar precio actual suavemente
+  // Agregar nuevo punto cada 10 segundos
   useEffect(() => {
-    if (priceHistory.length === 0) return
-
     const interval = setInterval(() => {
       setPriceHistory(prev => {
-        const lastPrice = prev[prev.length - 1]
-        const diff = currentPrice - lastPrice
+        if (prev.length === 0) return prev
         
-        // Si el cambio es muy pequeño, no actualizar
-        if (Math.abs(diff) < currentPrice * 0.0001) {
-          return prev
+        const lastPoint = prev[prev.length - 1]
+        const timeSinceLastPoint = Date.now() - lastPoint.timestamp
+        
+        // Solo agregar si han pasado al menos 10 segundos
+        if (timeSinceLastPoint < 10000) return prev
+        
+        // Pequeña variación aleatoria (+/- 0.5%)
+        const variation = (Math.random() - 0.5) * currentPrice * 0.01
+        const newPrice = currentPrice + variation
+        
+        const newPoint: PricePoint = {
+          price: newPrice,
+          timestamp: Date.now()
         }
         
-        // Movimiento suave hacia el nuevo precio (10% del camino)
-        const newPrice = lastPrice + (diff * 0.1)
-        
-        // Mantener últimos 500 puntos
-        return [...prev.slice(-499), newPrice]
+        // Mantener últimos 1000 puntos
+        return [...prev.slice(-999), newPoint]
       })
-    }, 2000)
+    }, 10000) // Cada 10 segundos
 
     return () => clearInterval(interval)
   }, [currentPrice])
 
   const initializePriceHistory = () => {
-    // Generar 200 puntos de historia inicial
-    const history: number[] = []
-    let price = currentPrice * 0.98
+    const now = Date.now()
+    const history: PricePoint[] = []
     
-    for (let i = 0; i < 200; i++) {
-      const drift = (currentPrice - price) * 0.01
-      const noise = (Math.random() - 0.5) * currentPrice * 0.002
-      price = Math.max(price + drift + noise, currentPrice * 0.5)
-      history.push(price)
+    // Generar últimas 24 horas de datos (un punto cada 2 minutos = 720 puntos)
+    let price = currentPrice
+    
+    for (let i = 720; i >= 0; i--) {
+      const timestamp = now - (i * 2 * 60 * 1000) // Cada 2 minutos
+      const noise = (Math.random() - 0.5) * currentPrice * 0.005
+      price = Math.max(price + noise, currentPrice * 0.8)
+      
+      history.push({ price, timestamp })
     }
     
-    history.push(currentPrice)
     setPriceHistory(history)
   }
 
   const updateChart = () => {
-    const config: Record<string, { points: number; interval: number; label: string }> = {
-      '1m': { points: 60, interval: 60, label: 'Last hour' },
-      '5m': { points: 72, interval: 300, label: 'Last 6 hours' },
-      '15m': { points: 96, interval: 900, label: 'Last 24 hours' },
-      '1h': { points: 168, interval: 3600, label: 'Last week' },
-      '1d': { points: 90, interval: 86400, label: 'Last 90 days' },
+    const config: Record<string, { intervalMs: number; label: string }> = {
+      '1m': { intervalMs: 60 * 1000, label: 'Last hour' },
+      '5m': { intervalMs: 5 * 60 * 1000, label: 'Last 6 hours' },
+      '15m': { intervalMs: 15 * 60 * 1000, label: 'Last 24 hours' },
+      '1h': { intervalMs: 60 * 60 * 1000, label: 'Last week' },
+      '1d': { intervalMs: 24 * 60 * 60 * 1000, label: 'Last 90 days' },
     }
 
-    const { points, interval } = config[timeframe]
+    const { intervalMs } = config[timeframe]
+    const now = Date.now()
     
-    // Usar los últimos N puntos de la historia
-    const dataPoints = priceHistory.slice(-points)
+    // Filtrar puntos del timeframe seleccionado
+    let rangeMs: number
+    switch(timeframe) {
+      case '1m': rangeMs = 60 * 60 * 1000; break // 1 hora
+      case '5m': rangeMs = 6 * 60 * 60 * 1000; break // 6 horas
+      case '15m': rangeMs = 24 * 60 * 60 * 1000; break // 24 horas
+      case '1h': rangeMs = 7 * 24 * 60 * 60 * 1000; break // 7 días
+      case '1d': rangeMs = 90 * 24 * 60 * 60 * 1000; break // 90 días
+      default: rangeMs = 6 * 60 * 60 * 1000;
+    }
     
+    const cutoff = now - rangeMs
+    const filteredData = priceHistory.filter(p => p.timestamp >= cutoff)
+    
+    // Agrupar por intervalos
+    const buckets: Map<number, number[]> = new Map()
+    
+    filteredData.forEach(point => {
+      const bucketTime = Math.floor(point.timestamp / intervalMs) * intervalMs
+      if (!buckets.has(bucketTime)) {
+        buckets.set(bucketTime, [])
+      }
+      buckets.get(bucketTime)!.push(point.price)
+    })
+    
+    // Convertir a arrays para el gráfico
     const labels: string[] = []
-    const now = new Date()
+    const prices: number[] = []
     
-    dataPoints.forEach((_, i) => {
-      const time = new Date(now.getTime() - ((dataPoints.length - i - 1) * interval * 1000))
+    const sortedBuckets = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0])
+    
+    sortedBuckets.forEach(([timestamp, priceArray]) => {
+      const date = new Date(timestamp)
       
       if (timeframe === '1d') {
-        labels.push(time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+        labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
       } else if (timeframe === '1h') {
-        labels.push(time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+        labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit' }))
       } else {
-        labels.push(time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
+        labels.push(date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
       }
+      
+      // Usar promedio del bucket
+      const avg = priceArray.reduce((a, b) => a + b, 0) / priceArray.length
+      prices.push(avg)
     })
 
     setChartData({
@@ -126,7 +192,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
       datasets: [
         {
           label: 'Price',
-          data: dataPoints,
+          data: prices,
           borderColor: 'rgb(168, 85, 247)',
           backgroundColor: 'rgba(168, 85, 247, 0.2)',
           fill: true,
@@ -142,14 +208,8 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
-    animation: {
-      duration: 750,
-      easing: 'easeInOutQuart' as const,
-    },
     plugins: {
-      legend: {
-        display: false,
-      },
+      legend: { display: false },
       tooltip: {
         mode: 'index' as const,
         intersect: false,
@@ -170,9 +230,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
     },
     scales: {
       x: {
-        grid: {
-          color: 'rgba(255, 255, 255, 0.1)',
-        },
+        grid: { color: 'rgba(255, 255, 255, 0.1)' },
         ticks: {
           color: '#9ca3af',
           maxRotation: 0,
@@ -180,9 +238,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         },
       },
       y: {
-        grid: {
-          color: 'rgba(255, 255, 255, 0.1)',
-        },
+        grid: { color: 'rgba(255, 255, 255, 0.1)' },
         ticks: {
           color: '#9ca3af',
           callback: function(value: any) {
@@ -191,17 +247,12 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         },
       },
     },
-    interaction: {
-      mode: 'nearest' as const,
-      axis: 'x' as const,
-      intersect: false,
-    },
   }
 
-  if (!chartData) {
+  if (!chartData || chartData.datasets[0].data.length === 0) {
     return (
       <div className="bg-white/10 backdrop-blur rounded-lg p-4 h-[500px] flex items-center justify-center">
-        <div className="text-white">Loading chart...</div>
+        <div className="text-white">Generating chart data...</div>
       </div>
     )
   }
@@ -212,7 +263,7 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
   const priceChangePercent = (priceChange / firstPrice) * 100
 
   const timeframeLabels: Record<string, string> = {
-    '1m': 'Last 60 minutes',
+    '1m': 'Last hour',
     '5m': 'Last 6 hours',
     '15m': 'Last 24 hours',
     '1h': 'Last 7 days',
@@ -257,17 +308,21 @@ export function PriceChart({ marketName, currentPrice }: PriceChartProps) {
         <div className="flex gap-6 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-purple-500 rounded" />
-            <span className="text-gray-400">Current: ${currentPrice.toLocaleString()}</span>
+            <span className="text-gray-400">Base: ${currentPrice.toLocaleString()}</span>
           </div>
-          <div className="text-gray-400">
-            High: ${Math.max(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          </div>
-          <div className="text-gray-400">
-            Low: ${Math.min(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          </div>
+          {chartData.datasets[0].data.length > 0 && (
+            <>
+              <div className="text-gray-400">
+                High: ${Math.max(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-gray-400">
+                Low: ${Math.min(...chartData.datasets[0].data).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </div>
+            </>
+          )}
         </div>
         <div className="text-gray-400 text-xs">
-          Live price tracking
+          Updates every 10s • {priceHistory.length} data points
         </div>
       </div>
     </div>
