@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { WalletButton } from '@/components/WalletButton'
 import { PriceChart } from '@/components/PriceChart'
+import { MarketSpecsModal } from '@/components/MarketSpecsModal'
 import { MARKETS } from '@/lib/constants'
 import { PublicKey } from '@solana/web3.js'
 import * as anchor from '@coral-xyz/anchor'
@@ -25,6 +26,7 @@ export default function TradingPageContent() {
   const [loading, setLoading] = useState(false)
   const [markPrice, setMarkPrice] = useState(0)
   const [existingPosition, setExistingPosition] = useState<any>(null)
+  const [showSpecs, setShowSpecs] = useState(false)
 
   useEffect(() => {
     if (!marketId) return
@@ -37,6 +39,17 @@ export default function TradingPageContent() {
     }
   }, [marketId, publicKey])
 
+  // 🔄 Auto-actualizar precio cada 10 segundos
+  useEffect(() => {
+    if (!market) return
+    
+    const interval = setInterval(() => {
+      fetchOnChainData(market)
+    }, 10000)
+    
+    return () => clearInterval(interval)
+  }, [market, publicKey])
+
   const fetchOnChainData = async (marketData: any) => {
     try {
       const marketPda = new PublicKey(marketData.marketPda)
@@ -45,7 +58,13 @@ export default function TradingPageContent() {
       if (accountInfo) {
         const data = accountInfo.data
         const priceCents = new anchor.BN(data.slice(40, 48), 'le').toNumber()
-        setMarkPrice(priceCents / 100)
+        const newPrice = priceCents / 100
+        
+        // Solo actualizar si cambió
+        if (newPrice !== markPrice) {
+          setMarkPrice(newPrice)
+          console.log(`📊 Price updated: $${newPrice}`)
+        }
       }
 
       if (publicKey) {
@@ -100,21 +119,19 @@ export default function TradingPageContent() {
       await fetchOnChainData(market)
       setSize('')
       
-      } catch (error: any) {
-        console.error('Error:', error)
-  
-        // Ignorar error si la TX ya fue procesada
-        if (error.message?.includes('already been processed')) {
-          alert('Position opened successfully!')
-          await fetchOnChainData(market)
-          setSize('')
-        } else {
-          alert(`Error: ${error.message || 'Failed to open position'}`)
-        }
-      } finally {
-        setLoading(false)
+    } catch (error: any) {
+      console.error('Error:', error)
+      
+      if (error.message?.includes('already been processed')) {
+        alert('Position opened successfully!')
+        await fetchOnChainData(market)
+        setSize('')
+      } else {
+        alert(`Error: ${error.message || 'Failed to open position'}`)
       }
-
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (!market) {
@@ -140,7 +157,7 @@ export default function TradingPageContent() {
                   {market.category}
                 </span>
                 <span className="px-2 py-1 bg-green-600/30 text-green-200 rounded text-xs">
-                  ⛓️ On-Chain
+                  ⛓️ Live Oracle
                 </span>
               </div>
             </div>
@@ -173,11 +190,14 @@ export default function TradingPageContent() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
             <div className="bg-white/10 backdrop-blur rounded-lg p-6 mb-6">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Mark Price</div>
+                  <div className="text-gray-400 text-sm mb-1 flex items-center gap-1">
+                    Mark Price
+                    <span className="text-xs text-green-400">● Live</span>
+                  </div>
                   <div className="text-3xl font-bold text-white">
-                    ${markPrice.toLocaleString()}
+                    ${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
                 <div>
@@ -199,6 +219,13 @@ export default function TradingPageContent() {
                   </div>
                 </div>
               </div>
+
+              <button
+                onClick={() => setShowSpecs(true)}
+                className="w-full py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg font-semibold transition flex items-center justify-center gap-2"
+              >
+                📋 Contract Specs
+              </button>
             </div>
 
             <PriceChart marketName={market.name} currentPrice={markPrice} />
@@ -318,6 +345,13 @@ export default function TradingPageContent() {
           </div>
         </div>
       </main>
+
+      {showSpecs && (
+        <MarketSpecsModal
+          market={market}
+          onClose={() => setShowSpecs(false)}
+        />
+      )}
     </div>
   )
 }
