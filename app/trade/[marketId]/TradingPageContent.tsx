@@ -13,6 +13,7 @@ import * as anchor from '@coral-xyz/anchor'
 import { openPosition, getUserPosition } from '@/lib/trading'
 
 export default function TradingPageContent() {
+  console.log("🚀 TradingPageContent loaded - auto-refresh enabled");
   const params = useParams()
   const marketId = params?.marketId as string
   
