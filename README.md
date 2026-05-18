@@ -236,3 +236,28 @@ This is a demonstration project deployed on Solana Devnet. Do not use real funds
 <div align="center">
   <strong>Built with ❤️ on Solana</strong>
 </div>
+
+---
+
+## 🔮 Oracle System
+
+SpecMarket uses an off-chain oracle to update on-chain prices.
+
+### Architecture
+- **Off-chain script** fetches prices from APIs
+- **Updates on-chain** via `update_price` instruction
+- **Production-ready** architecture for real price feeds
+
+### Current Implementation
+- **Mode:** Simulated prices with realistic volatility
+- **Frequency:** Updates every 30 seconds
+- **Markets:** All 10 markets supported
+
+### For Real Prices
+See [ORACLE.md](../../specmarket_multi/ORACLE.md) for integration guide with:
+- TCGPlayer (Pokémon/MTG cards)
+- eBay API (universal)
+- StockX/GOAT (sneakers)
+- Chrono24 (luxury watches)
+
+---
